@@ -1,0 +1,664 @@
+FIRST_NOTIFICATION = true;
+finished = (finished == "True") ? true : false;
+
+function getUTCTimestamp() {
+    return (new Date()).getTime();
+}
+
+// Denotes the timestamp till which data displayed is correct.
+var last_updated_timestamp = getUTCTimestamp();
+
+function startTimer(){
+    var countdown_elem = $('#countdown-10');
+    var show_text = null;
+    var visual_countdown = true;
+    $(".date-countdown").removeClass('invisible');
+    if (finished){
+        finishedTimer(countdown_elem);
+    }else {
+        countDownTimer(countdown_elem, end_time);
+    }
+}
+
+function finishedTimer(countdown){
+    $('#' + countdown.attr('id')+' #minutes-text').html("0");
+    $('#' + countdown.attr('id')+' #seconds-text').html("0");
+    $('#' + countdown.attr('id')+' #seconds-1').html("0");
+    $('#' + countdown.attr('id')+' #seconds-0').html("0");
+    $('#' + countdown.attr('id')+' #minutes-1').html("0");
+    $('#' + countdown.attr('id')+' #minutes-0').html("0");
+    $('#' + countdown.attr('id')+' #hours-1').html("0");
+    $('#' + countdown.attr('id')+' #hours-0').html("0");
+}
+
+$(document).ready(function(){
+    // Activity section
+    $(".activity-heading").on("click", toggleActivity);
+    // toggling activity ends
+    $(".notification-count").hide();
+    $(".problem-container").resizable({
+        handles: 'e'
+    });
+    $('.problem-container').resize(function(){
+       $('.editor-container').width($(".code-problem-container").width()-$(".problem-container").width());
+    });
+    $(window).resize(function(){
+       $('.editor-container').width($(".code-problem-container").width()-$(".problem-container").width());
+       $('.problem-container').height($(".code-problem-container").height());
+    });
+
+
+    // Do a ajax call to get the activity log
+    $.ajax({
+        url: activity_log_url,
+        method: 'get',
+        success: function(response) {
+            for (var i = 0; i < response.length; i++) {
+                var log = response[i];
+                append_activity_log(log);
+            }
+        }
+    });
+
+
+    // Setup close button
+    $('.cross_img').on('click', function() {
+        // Hide all the full screen modals
+        // There should be only one full screen modal at one point
+        $('.full_screen_modal').hide();
+    });
+
+    //On pressing ESC key, close any open fullscreen modals
+    $(document).keyup(function(e) {
+        // 27 is the keyCode of ESC key
+        if (e.keyCode == 27) {
+            $('.full_screen_modal').hide();
+        }
+    });
+
+    $('.resume-btn').on('click', function() {
+        $('.full_screen_modal').hide();
+    });
+
+    $('#quit-fight-btn').on('click', function() {
+        for (var i = 0; i < 2; i++) {
+            if (i == 0) {
+                // For the current user
+                var target = $('#end-fight-modal .left');
+                var source = $('.fight-header .current-user');
+
+            } else {
+                // For the opponent data
+                var target = $('#end-fight-modal .right');
+                var source = $('.fight-header .other-user');
+
+            }
+
+            target.find('.full_name').text(source.find('.full-name').text());
+            target.find('.username').text(source.find('.username').text());
+            var solved_test_cases = String(source.find('.solved').text());
+            if (solved_test_cases.length == 1) 
+                solved_test_cases = "0" + solved_test_cases;
+
+            target.find('.solved').text(solved_test_cases);
+
+            // Add colors
+            if (source.find('.solved-more').length > 0) {
+                target.find('.solved').addClass('solved-more');
+            } else {
+                target.find('.solved').addClass('solved-less');
+            }
+
+            var total_test_cases = String(source.find('.total').text());
+            if (total_test_cases.length == 1)
+                total_test_cases = "0" + total_test_cases;
+
+            target.find('.total').text(total_test_cases);
+
+            var avatar_url = source.find('.gravatar img').attr('src');
+            target.find('.gravatar img').attr('src', avatar_url);
+        }
+        $('#end-fight-modal').show();
+    });
+    $('#quit-fight').on('click', function() {
+        $.ajax({
+            url: end_fight_url,
+            method: 'get',
+            success: function(response) {
+                var is_last_player = response['lp'];
+                if (is_last_player) {
+                    var data = response['data'];
+                    show_fight_summary(data);
+                } else {
+                    markFinishedFight();
+                    $('#end_fight_status_running').show();
+                }
+            }
+        });
+    });
+    $(".fight-button").on('click', function(){
+        var this_id = $(this).attr("id");
+        var hash = $(this).attr("problem-hash");
+         var clicked_id = "#" + this_id + '-' + hash;
+        $(clicked_id).click();
+    });
+    $("#compile-test-button").on('click', function(){
+        var fight_hash = $("#fight-hash").html();
+        $.ajax({
+            // TODO: remove this hardcoded url
+            url: '/codearena/compile-alerts/',
+            data: {
+                'url_hash': fight_hash
+            },
+            dataType: 'json',
+            success: function(response){
+                console.log(response);
+            }
+        });
+    });
+    subscribe_to_fight_notifcations();
+    startTimer();
+    syncFightRingStatus();
+    if (finished){
+        markFinishedFight();
+    }
+    editor = ace.edit('code-ace-editor');
+    editor.setOptions({
+            minLines: 60,
+            maxLines: Infinity
+    });
+    editor.setTheme("ace/theme/monokai");
+    show_optional_summary();
+});
+
+
+function show_fight_summary(fight_summary) {
+    var state = fight_summary['state'];
+    var msg = '';
+    var status_img_url = "";
+    if (state == 'solved') {
+        var winner_username = fight_summary['winner_username'];
+        if (winner_username == current_username) {
+            msg = 'Congratulations, you won the fight';
+            status_img_url = STATIC_URL + 'fight_club/images/win.png'
+            $('#end-fight-status .social_share').show();
+        } else {
+            msg = 'Better luck next time';
+            status_img_url = STATIC_URL + 'fight_club/images/lose.png'
+        }
+    } else if (state == 'timedout') {
+        msg = 'Timed Out';
+        status_img_url = STATIC_URL + 'fight_club/images/timed_out.png'
+    } else if (state == 'draw') {
+        msg = "Oh! It's a tie.";
+        status_img_url = STATIC_URL + 'fight_club/images/draw.png'
+    }
+    var usernames = fight_summary['usernames'];
+    var opponent_username = '';
+    if (usernames[0] == current_username) {
+        opponent_username = usernames[1];
+    } else {
+        opponent_username = usernames[0];
+    }
+    var selector = $('#end-fight-status .left');
+    var dataSource = fight_summary['users'][current_username];
+    for (var i = 0; i <= 1; i++) {
+        if (i == 1) {
+            selector =  $('#end-fight-status .right');
+            dataSource = fight_summary['users'][opponent_username];
+        }
+        var score = dataSource['score'];
+        var test_cases_solved = dataSource['test_cases_solved'] + "";
+        var total_test_cases = dataSource['total_test_cases'] + "";
+        var avatar_url = dataSource['avatar_url'];
+        var full_name = dataSource['name'];
+        var username = dataSource['username']; 
+        if (i == 0)
+            $('.summary-score').text(score);
+        selector.find('.full_name').text(full_name);
+        selector.find('.username').text(username);
+
+        // If the number of test cases solved or total is one digit number,
+        // convert it into two digits
+
+        if (test_cases_solved.length == 1)
+            test_cases_solved = '0' + test_cases_solved
+        if (total_test_cases.length == 1)
+            total_test_cases = '0' + total_test_cases
+
+        selector.find('.solved').text(test_cases_solved);
+        selector.find('.total').text(total_test_cases);
+        selector.find('.gravatar img').attr('src', avatar_url);
+
+    }
+    var current_solved = fight_summary['users'][current_username]['test_cases_solved'];
+    var opponent_solved = fight_summary['users'][opponent_username]['test_cases_solved'];
+    if (current_solved == opponent_solved) {
+        $('#end-fight-status .solved').addClass('solved-more');
+    } else if (current_solved > opponent_solved){
+        $('#end-fight-status .left .solved').addClass('solved-more');
+        $('#end-fight-status .right .solved').addClass('solved-less');
+    } else {
+        $('#end-fight-status .right .solved').addClass('solved-more');
+        $('#end-fight-status .left .solved').addClass('solved-less');
+    }
+
+    $('.status_img').attr('src',status_img_url);
+    $('.summary-title').text(msg);
+
+    $('#end-fight-status').show();
+    markFinishedFight();
+}
+
+function toggleActivity() {
+    var clicked = $(".toggle-size");
+    if (clicked.hasClass("fa-window-minimize")){
+        $(".activity").css("height", "0px");
+        $(".statement").css("height", "100%").css("height", "-=26px");
+        $(".activity-heading").css("border-bottom", "none");
+        clicked.removeClass("fa-window-minimize");
+        clicked.addClass("fa-window-maximize");
+    }else{
+        $(".activity-heading").css("border-bottom", "1px solid #d9dde0");
+        $(".activity").css("height", "50%");
+        $(".statement").css("height", "50%").css("height", "-=39px");
+        clicked.removeClass("fa-window-maximize");
+        clicked.addClass("fa-window-minimize");
+        $(".notification-count").hide();
+        $(".notification-count").html("0");
+    }
+}
+
+function subscribe_to_fight_notifcations(){
+    var pusher = get_pusher_instance();
+    if(!pusher){
+        return false;
+    }
+    var channel_name = $("#pusher-channel-fight").html();
+    var channel = pusher.channel(channel_name);
+    if(channel) {
+        return false;
+    }
+    channel = pusher.subscribe(channel_name);
+    channel.bind('activity', function(data){
+        var message_timestamp = data.timestamp;
+        if (message_timestamp > last_updated_timestamp) {
+            // If the message timestamp is greater than the last updated timestamp, then only append this activity log. The reason for this is that, it may happen that the same message was fetched by the polling and appended.
+            last_updated_timestamp = getUTCTimestamp();
+
+            // toast_notification(data);
+            if ($(".toggle-size").hasClass("fa-window-maximize")) {
+                var c = parseInt($(".notification-count").html());
+                $(".notification-count").html(c+1);
+                $(".notification-count").css("display", "inline-block");
+                $(".notification-count").show();``
+            }
+            append_activity_log(data);
+        }
+    });
+    channel.bind('end', function(data) {
+        if (!finished) {
+            markFinishedFight();
+            finished = true;
+            show_fight_summary(data);
+        }
+    });
+}
+
+function toast_notification(message){
+    var action = "";
+    if(message.message_type == 'submit'){
+        action = "submitted";
+    }else if(message.message_type == 'compile'){
+        action = "compiled";
+    }
+    var notification_text = message.name + " " + action + " the code.";
+    $(".notif-text").html(notification_text);
+    $(".notification").show();
+    $(".notification").fadeOut(3000);
+}
+
+function get_result_message(result) {
+    var result_information = "";
+    if (result == "CE") {
+        result_information = '<i class="fa fa-warning fa-orange result-icon tool-tip" title="Compilation Error"></i> <span class="fa-orange">Compilation Error</span>';
+    }
+    else if (result == "WA") {
+        result_information = '<i class="fa fa-times-circle fa-red result-icon tool-tip" title="Wrong Answer"></i> <span  class="fa-red">Wrong Answer</span>';
+    }
+    else if (result == "RE") {
+        result_information = '<i class="fa fa-exclamation-circle fa-orange result-icon tool-tip" title="Runtime Error"></i> <span class="fa-orange">Runtime Error</span>';
+    }
+    else if (result == "AC") {
+        result_information = '<i class="fa fa-check-circle fa-green result-icon tool-tip" title="Solution Accepted"></i> \
+                              <span class="fa-green">Accepted</span>';
+    }
+    else if (result == "PAC") {
+        result_information = '<span class="tool-tip" title="Partially Solved"> \
+                                <i class="fa fa-check-circle fa-green result-icon"></i><!-- \
+                                --><i class="fa fa-ban fa-orange result-sub-icon"></i> \
+                            </span> \
+                            <span class="fa-green">Partially Accepted</span>';
+    }
+    else if (result == "TLE") {
+        result_information = '<span class="tool-tip" title="Time Limit Exceeded"> \
+                                <i class="fa fa-clock-o dark result-icon"></i> \
+                                <i class="fa fa-warning fa-orange result-sub-icon"></i> \
+                            </span> \
+                            <span class="fa-orange">Time Limit Exceeded</span>';
+    }
+    else if (result == 'MLE') {
+        result_information = '<span class="tool-tip" title="Memory Limit Exceeded"> \
+                                <i class="fa fa-stack-overflow dark result-icon"></i> \
+                                <i class="fa fa-times-circle fa-red result-sub-icon"></i> \
+                                </span> \
+                                <span class="fa-orange">Memory Limit Exceeded</span>';
+    }
+
+    return result_information;
+}
+
+function append_activity_log(message) {
+    var user_name = message.name;
+    var message_type = message.message_type;
+    // UTC timestamp
+    var timestamp = message.timestamp;
+    // Convert the UTC timestamp to the user's local system timezone
+    var log_time = (new Date(timestamp)).toLocaleString();
+    var user_avatar_url = message.avatar_url;
+    var user_id = message.user_id;
+    var test_cases = message.test_cases_solved;
+    if (message_type == 'compile') {
+        var element = '<div class="code-log code-compile-log">' +
+                        '<div class="log-image"></div>' +
+                        '<div class="body">' +
+                            '<div class="avatar" style="background:url(' + user_avatar_url + '); background-size:contain"></div>' +
+                            '<div class="message">' +
+                                '<div class="description"><span class="bold">' + user_name + '</span> has compiled ' +
+                                    'the code.' +
+                                '</div>' +
+                                '<div class="sub-description light small">' + log_time + '</div> ' +
+                            '</div>' +
+                        '</div>' +
+                    '</div>'+
+                    '<div class="divider"></div>';
+
+    } else if (message_type == 'submit') {
+        var result = message.result;
+        var container_color = '';
+        if (result == "RE" || result == "CE" || result == "TLE" || result == "MLE") {
+            container_color = "#f49020";
+        } else if (result == "WA") {
+            container_color = "#d33737";
+        } else if (result == "AC" || result == "PAC"){
+            container_color = "#73b369";
+        }
+        else {
+            container_color = "#e5e7e8";
+        }
+        var element = '<div class="code-log code-submit-log">' +
+                        '<div class="log-image"></div>' +
+                        '<div class="body">' +
+                            '<div class="avatar" style="background:url(' + user_avatar_url + '); background-size:contain"></div>' +
+                            '<div class="message">' +
+                                '<div class="description"><span class="bold">' + user_name + '</span> submitted ' +
+                                    'the code.' +
+                                '</div>' +
+                                '<div class="sub-description light small">' + log_time + '</div> ' +
+                            '</div>' +
+                        '</div>' +
+                    '</div>';
+
+        var result_container = '<div class="divider">' +
+                                '<div class="log-result-container" style="border-left:5px solid ' + container_color + '">' +
+                                    '<div class="result">' +
+                                        '<span class="weight-600">RESULT: </span>' +
+                                            get_result_message(result) +
+                                    '</div>' +
+                                '</div>' +
+                               '</div>';
+        element += result_container;
+        update_test_case_count(user_id, test_cases);
+    }
+    $(".activity").prepend(element);
+    if (FIRST_NOTIFICATION){
+        FIRST_NOTIFICATION = false;
+        toggleActivity();
+    }
+};
+
+function update_test_case_count(user_id, count, persistent){
+    var id = "#score-"+user_id;
+    var solved = id+">.solved";
+    if (count.length < 2){
+        count = "0" + count;
+    }
+    $(solved).html(count);
+    update_user_states(persistent);
+}
+
+function update_user_states(persistent){
+    var scores = $(".score");
+    $(scores).removeClass("win-state");
+    $(scores).removeClass("lose-state");
+    var first = $(scores[0]);
+    var second = $(scores[1]);
+    var score1 = parseInt($(scores[0]).children(".solved").html());
+    var score2 = parseInt($(scores[1]).children(".solved").html());
+    var all_solved_divs = $(scores).children(".solved");
+    $(all_solved_divs).addClass("solved-less");
+    if (score1 == score2){
+        $(all_solved_divs).removeClass("solved-less");
+        $(all_solved_divs).addClass("solved-more");
+        if (persistent){
+            $(first).addClass("win-state");
+            $(second).addClass("win-state");
+        }
+    }else if(score1 > score2){
+        $(first).children(".solved").removeClass("solved-less");
+        $(first).children(".solved").addClass("solved-more");
+        var div_id = $(first).attr("id");
+        if (persistent){
+            $(first).addClass("win-state");
+            $(second).addClass("lose-state");
+        }else
+            bgFadeOut(div_id, "win-state");
+    }else{
+        $(second).children(".solved").removeClass("solved-less");
+        $(second).children(".solved").addClass("solved-more");
+        var div_id = $(second).attr("id");
+        if (persistent){
+            $(first).addClass("lose-state");
+            $(second).addClass("win-state");
+        }else
+            bgFadeOut(div_id, "win-state");
+    }
+}
+
+function bgFadeOut(id, bg_class){
+    var div_id = "#"+id;
+    $(div_id).addClass(bg_class);
+    setTimeout(function(){
+        $(div_id).removeClass(bg_class);
+    }, 1000);
+}
+
+function syncFightRingStatus() {
+    // Helpful in cases when pusher is not working
+    var delay = 30; // 30 seconds
+    var timer = setInterval(function() {
+
+        // If the fight is finished, then clear the timer
+        if (finished) {
+            clearInterval(timer);
+            return;
+        }
+
+        var current_timestamp = getUTCTimestamp();
+        // when was the last update done (in seconds)
+        var diff = (current_timestamp - last_updated_timestamp) / 1000;
+        
+        if (diff > delay) {
+            // We will fetch for update, if only no update was done in the previous cycle. This essentially means that Pusher was working, and hence no need to do an another fetch
+            $.ajax({
+                url: fight_status_url,
+                type: 'POST',
+                data: { timestamp: last_updated_timestamp},
+                success: function(data) {
+                    if (current_timestamp > last_updated_timestamp) {
+                        // This condition is necessary, since it may happen that in the meantime between firing the ajax call and getting the response back from the server, pusher sent some message, and thus the results of these ajax call will be stale.
+
+                        // Append new activity logs
+                        var activity = data['activity'];
+                        for (var i = 0; i < activity.length; i++) {
+                            var log = activity[i];
+                            append_activity_log(log);
+                        }
+
+                        // Update the test cases data
+                        var test_cases_data = data['test_cases'];
+                        var user_ids = Object.keys(test_cases_data);
+                        for (var i = 0; i < user_ids.length; i++) {
+                            var user_id = user_ids[i];
+                            $('#score-'+user_id).find('.solved').text(test_cases_data[user_id]);
+                        }
+                        update_user_states();
+
+                        // Check if fight is ended
+                        var is_running = data['is_running'];
+                        if (!is_running) {
+                            window.clearInterval(timer);
+                            if (!finished) {
+                                finished = true;
+                                markFinishedFight();
+                                show_fight_summary(data['summary']);
+                            }
+                        }
+
+                        last_updated_timestamp = current_timestamp;
+                    }
+                }
+            });
+        }
+
+    }, delay * 1000);
+}
+
+function markFinishedFight(){
+    var finishedFooter = '<div class="finished-fight-footer weight-600">'+
+                    '<div class="finish-message"> <i class="fa fa-flag-checkered" aria-hidden="true"></i> This fight is over. You can start a new fight from the dashboard</div>' +
+                    '<div class="goto-dashboard"><a class="btn-blue" href="/codearena/">Go to Dashboard</a></div></div>';
+    $(".ring-footer").html(finishedFooter);
+    update_user_states(true);
+    finished = true;
+    if (typeof(timerInterval) != "undefined"){
+        clearInterval(timerInterval);
+    }
+    var countdown_elem = $('#countdown-10');
+    finishedTimer(countdown_elem);
+    var editor = ace.edit('code-ace-editor');
+    editor.setReadOnly(true);
+}
+
+
+function countDownTimer(countdown, target_date){
+    timerInterval = setInterval(function () {
+            var current_date = new Date().getTime();
+            var seconds_left = (target_date - current_date) / 1000;
+            var timer_string = '';
+
+            seconds_left = seconds_left % 86400;
+
+            hours = parseInt(seconds_left / 3600);
+            seconds_left = seconds_left % 3600;
+
+            minutes = parseInt(seconds_left / 60);
+
+            seconds = parseInt(seconds_left % 60);
+
+            countdown.removeClass('hidden');
+
+            $('#' + countdown.attr('id')+' #seconds-1').html(parseInt(seconds/10));
+            $('#' + countdown.attr('id')+' #seconds-0').html(seconds%10);
+            $('#' + countdown.attr('id')+' #minutes-1').html(parseInt(minutes/10));
+            $('#' + countdown.attr('id')+' #minutes-0').html(minutes%10);
+            $('#' + countdown.attr('id')+' #hours-1').html(parseInt(hours/10));
+            $('#' + countdown.attr('id')+' #hours-0').html(hours%10);
+
+            if (hours==0 && minutes==0 && seconds==0) {
+                clearInterval(timerInterval);
+            }
+
+        }, 1000);
+
+}
+
+function onBoarding(){
+    var steps = [
+        {
+            intro: "Your timer has started. Keep up the speed to solve the problem before your opponent solves it.",
+            element: document.querySelector(".date-countdown"),
+            position: "left"
+        },
+        {
+            intro: "This is your problem statement.",
+            element: document.querySelector(".statement"),
+            position: "right"
+        },
+        {
+            intro: "This is where you can write your code.",
+            element: document.querySelector(".editor-container"),
+            position: "left"
+        },
+        {
+            intro: "Clicking on these buttons will let you compile and submit the code",
+            element: document.querySelector(".new-buttons-container"),
+            position: "top"
+        },
+        {
+            intro: "You'll see your and your opponent's activity here.",
+            element: document.querySelector(".activity"),
+            position: "right",
+        },
+        {
+            intro: "You can see your opponent and the number of test cases each of you have solved.",
+            element: document.querySelector(".users-container"),
+            position:"right",
+        }
+    ]
+    var fight_cookie = getCookie("he_arena_firstfight");
+    if (!fight_cookie){
+        introJs().setOptions({
+            'steps': steps,
+            'showStepNumbers': false,
+            'hidePrev': true,
+            'exitOnOverlayClick': false,
+            'showBullets': false,
+            'hideNext': true,
+            'overlayOpacity': 0.2
+        }).onchange(function(targetElement) {
+            var cls = $(targetElement).attr("class");
+            var clicked = $(".toggle-size");
+            switch (cls)
+                {
+                    case "new-buttons-container regular":
+                        if (!clicked.hasClass("fa-window-minimize")){
+                            toggleActivity();
+                        }
+                    break;
+                    case "activity regular dark":
+                        //toggleActivity();
+                    break;
+                }
+        }).start().oncomplete(function(){
+            createCookie("he_arena_firstfight", true, 365);
+        });
+    }
+}
+
+
+function show_optional_summary() {
+    if (show_summary) {
+        show_fight_summary(summary);
+    }
+}
